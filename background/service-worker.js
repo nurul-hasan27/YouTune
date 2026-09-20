@@ -98,7 +98,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 /**
- * Extracts the most dominant color of the thumbnail and its darker version.
+ * Extracts the true dominant color of the thumbnail using Hue-Saturation clustering,
+ * and creates a darker version of that same color for the gradient.
  */
 async function extractDominantColors(url) {
   if (!url) return null;
@@ -108,13 +109,22 @@ async function extractDominantColors(url) {
     const blob = await response.blob();
     const bitmap = await createImageBitmap(blob);
 
-    const canvas = new OffscreenCanvas(32, 32);
+    const canvas = new OffscreenCanvas(48, 48);
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    ctx.drawImage(bitmap, 0, 0, 32, 32);
+    ctx.drawImage(bitmap, 0, 0, 48, 48);
 
-    const imageData = ctx.getImageData(0, 0, 32, 32).data;
-    const colorBuckets = new Map();
-    let sumR = 0, sumG = 0, sumB = 0, validPixels = 0;
+    const imageData = ctx.getImageData(0, 0, 48, 48).data;
+
+    // 24 hue sectors of 15 degrees each (0-360)
+    const hueBuckets = Array.from({ length: 24 }, () => ({
+      sumR: 0,
+      sumG: 0,
+      sumB: 0,
+      count: 0,
+      score: 0
+    }));
+
+    let fallbackR = 0, fallbackG = 0, fallbackB = 0, totalValid = 0;
 
     for (let i = 0; i < imageData.length; i += 4) {
       const r = imageData[i];
@@ -124,50 +134,65 @@ async function extractDominantColors(url) {
 
       if (a < 128) continue; // skip transparent
 
-      sumR += r;
-      sumG += g;
-      sumB += b;
-      validPixels++;
+      fallbackR += r;
+      fallbackG += g;
+      fallbackB += b;
+      totalValid++;
 
-      // Filter extreme edge cases (near-black letterbox bars and blinding pure white)
-      if ((r < 20 && g < 20 && b < 20) || (r > 240 && g > 240 && b > 240)) continue;
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      const l = (max + min) / 510;
+      const d = max - min;
+      const s = max === 0 ? 0 : d / max;
 
-      // Group into color buckets
-      const qr = Math.round(r / 16) * 16;
-      const qg = Math.round(g / 16) * 16;
-      const qb = Math.round(b / 16) * 16;
-      const key = `${qr},${qg},${qb}`;
+      // Filter out pure black, pure white, and dull desaturated grays/muds
+      // This prevents dark letterbox bars, shadows, or gray backgrounds from hijacking the artwork color
+      if (l < 0.12 || l > 0.92 || s < 0.15) continue;
 
-      colorBuckets.set(key, (colorBuckets.get(key) || 0) + 1);
-    }
-
-    let dominantR, dominantG, dominantB;
-
-    if (colorBuckets.size > 0) {
-      // Find the most frequent color bucket
-      let maxCount = 0;
-      let bestKey = null;
-      for (const [key, count] of colorBuckets.entries()) {
-        if (count > maxCount) {
-          maxCount = count;
-          bestKey = key;
-        }
+      let h = 0;
+      if (max === r) {
+        h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+      } else if (max === g) {
+        h = ((b - r) / d + 2) / 6;
+      } else {
+        h = ((r - g) / d + 4) / 6;
       }
-      [dominantR, dominantG, dominantB] = bestKey.split(',').map(Number);
-    } else if (validPixels > 0) {
-      dominantR = Math.round(sumR / validPixels);
-      dominantG = Math.round(sumG / validPixels);
-      dominantB = Math.round(sumB / validPixels);
-    } else {
-      dominantR = 30;
-      dominantG = 41;
-      dominantB = 59;
+      const deg = (h * 360) % 360;
+      const bucketIdx = Math.min(23, Math.floor(deg / 15));
+
+      const bucket = hueBuckets[bucketIdx];
+      bucket.sumR += r;
+      bucket.sumG += g;
+      bucket.sumB += b;
+      bucket.count++;
+      // Heavily weight chromatic/saturated pixels so the true theme color wins
+      bucket.score += (1 + s * 4);
     }
 
-    // Use the exact picked dominant color without dimming
-    const domR = dominantR;
-    const domG = dominantG;
-    const domB = dominantB;
+    // Find the hue sector with the highest chromatic score
+    let bestBucket = null;
+    let maxScore = 0;
+    for (const b of hueBuckets) {
+      if (b.score > maxScore) {
+        maxScore = b.score;
+        bestBucket = b;
+      }
+    }
+
+    let domR, domG, domB;
+    if (bestBucket && bestBucket.count > 0) {
+      domR = Math.round(bestBucket.sumR / bestBucket.count);
+      domG = Math.round(bestBucket.sumG / bestBucket.count);
+      domB = Math.round(bestBucket.sumB / bestBucket.count);
+    } else if (totalValid > 0) {
+      domR = Math.round(fallbackR / totalValid);
+      domG = Math.round(fallbackG / totalValid);
+      domB = Math.round(fallbackB / totalValid);
+    } else {
+      domR = 30;
+      domG = 41;
+      domB = 59;
+    }
 
     // Darker version of the same color (20% intensity)
     const darkR = Math.round(domR * 0.2);

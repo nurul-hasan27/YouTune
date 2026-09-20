@@ -50,27 +50,37 @@
       try {
         if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
           const response = await new Promise((resolve) => {
-            chrome.runtime.sendMessage(
-              { action: 'EXTRACT_COLORS', url: thumbnailUrl },
-              (res) => resolve(res)
-            );
+            try {
+              chrome.runtime.sendMessage(
+                { action: 'EXTRACT_COLORS', url: thumbnailUrl },
+                (res) => {
+                  if (chrome.runtime.lastError) {
+                    resolve(null);
+                  } else {
+                    resolve(res);
+                  }
+                }
+              );
+            } catch (_) {
+              resolve(null);
+            }
           });
 
           if (response && response.success && response.colors) {
             const { dominant, darker } = response.colors;
-            gradient = `radial-gradient(ellipse at 50% 38%, ${dominant} 0%, ${darker} 100%)`;
+            gradient = `radial-gradient(ellipse at 50% 35%, ${dominant} 0%, ${darker} 100%)`;
           }
         }
       } catch (err) {
         console.warn('[YouTune Background] Service worker color extraction error:', err);
       }
 
-      // 2. Client-side fallback
+      // 2. Client-side fallback with Hue-Saturation clustering
       if (!gradient) {
         try {
           const colors = await this._clientExtract(thumbnailUrl);
           if (colors) {
-            gradient = `radial-gradient(ellipse at 50% 38%, ${colors.dominant} 0%, ${colors.darker} 100%)`;
+            gradient = `radial-gradient(ellipse at 50% 35%, ${colors.dominant} 0%, ${colors.darker} 100%)`;
           }
         } catch (_) {}
       }
@@ -104,58 +114,90 @@
           settled = true;
           try {
             const canvas = document.createElement('canvas');
-            canvas.width = 32;
-            canvas.height = 32;
+            canvas.width = 48;
+            canvas.height = 48;
             const ctx = canvas.getContext('2d', { willReadFrequently: true });
-            ctx.drawImage(img, 0, 0, 32, 32);
-            const data = ctx.getImageData(0, 0, 32, 32).data;
+            ctx.drawImage(img, 0, 0, 48, 48);
+            const imageData = ctx.getImageData(0, 0, 48, 48).data;
 
-            const colorBuckets = new Map();
-            let sumR = 0, sumG = 0, sumB = 0, total = 0;
+            const hueBuckets = Array.from({ length: 24 }, () => ({
+              sumR: 0,
+              sumG: 0,
+              sumB: 0,
+              count: 0,
+              score: 0
+            }));
 
-            for (let i = 0; i < data.length; i += 4) {
-              const r = data[i];
-              const g = data[i + 1];
-              const b = data[i + 2];
-              const a = data[i + 3];
+            let fallbackR = 0, fallbackG = 0, fallbackB = 0, totalValid = 0;
+
+            for (let i = 0; i < imageData.length; i += 4) {
+              const r = imageData[i];
+              const g = imageData[i + 1];
+              const b = imageData[i + 2];
+              const a = imageData[i + 3];
 
               if (a < 128) continue;
-              sumR += r; sumG += g; sumB += b; total++;
 
-              if ((r < 20 && g < 20 && b < 20) || (r > 240 && g > 240 && b > 240)) continue;
+              fallbackR += r;
+              fallbackG += g;
+              fallbackB += b;
+              totalValid++;
 
-              const qr = Math.round(r / 16) * 16;
-              const qg = Math.round(g / 16) * 16;
-              const qb = Math.round(b / 16) * 16;
-              const key = `${qr},${qg},${qb}`;
-              colorBuckets.set(key, (colorBuckets.get(key) || 0) + 1);
+              const max = Math.max(r, g, b);
+              const min = Math.min(r, g, b);
+              const l = (max + min) / 510;
+              const d = max - min;
+              const s = max === 0 ? 0 : d / max;
+
+              // Filter out pure black, pure white, and dull desaturated grays/muds
+              if (l < 0.12 || l > 0.92 || s < 0.15) continue;
+
+              let h = 0;
+              if (max === r) {
+                h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+              } else if (max === g) {
+                h = ((b - r) / d + 2) / 6;
+              } else {
+                h = ((r - g) / d + 4) / 6;
+              }
+              const deg = (h * 360) % 360;
+              const bucketIdx = Math.min(23, Math.floor(deg / 15));
+
+              const bucket = hueBuckets[bucketIdx];
+              bucket.sumR += r;
+              bucket.sumG += g;
+              bucket.sumB += b;
+              bucket.count++;
+              bucket.score += (1 + s * 4);
+            }
+
+            let bestBucket = null;
+            let maxScore = 0;
+            for (const b of hueBuckets) {
+              if (b.score > maxScore) {
+                maxScore = b.score;
+                bestBucket = b;
+              }
             }
 
             let domR, domG, domB;
-            if (colorBuckets.size > 0) {
-              let maxCount = 0, bestKey = null;
-              for (const [key, count] of colorBuckets.entries()) {
-                if (count > maxCount) {
-                  maxCount = count;
-                  bestKey = key;
-                }
-              }
-              [domR, domG, domB] = bestKey.split(',').map(Number);
-            } else if (total > 0) {
-              domR = Math.round(sumR / total);
-              domG = Math.round(sumG / total);
-              domB = Math.round(sumB / total);
+            if (bestBucket && bestBucket.count > 0) {
+              domR = Math.round(bestBucket.sumR / bestBucket.count);
+              domG = Math.round(bestBucket.sumG / bestBucket.count);
+              domB = Math.round(bestBucket.sumB / bestBucket.count);
+            } else if (totalValid > 0) {
+              domR = Math.round(fallbackR / totalValid);
+              domG = Math.round(fallbackG / totalValid);
+              domB = Math.round(fallbackB / totalValid);
             } else {
-              domR = 30; domG = 41; domB = 59;
+              domR = 30;
+              domG = 41;
+              domB = 59;
             }
 
-            const cR = domR;
-            const cG = domG;
-            const cB = domB;
-
             resolve({
-              dominant: `rgb(${cR}, ${cG}, ${cB})`,
-              darker: `rgb(${Math.round(cR * 0.2)}, ${Math.round(cG * 0.2)}, ${Math.round(cB * 0.2)})`
+              dominant: `rgb(${domR}, ${domG}, ${domB})`,
+              darker: `rgb(${Math.round(domR * 0.2)}, ${Math.round(domG * 0.2)}, ${Math.round(domB * 0.2)})`
             });
           } catch (e) {
             resolve(null);
@@ -169,7 +211,9 @@
           }
         };
 
-        img.src = url;
+        const sep = url.includes('?') ? '&' : '?';
+        img.src = `${url}${sep}yt_cors=${Date.now()}`;
+
         setTimeout(() => {
           if (!settled) {
             settled = true;
