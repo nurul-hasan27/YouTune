@@ -7,7 +7,47 @@ Transform YouTube into a beautiful, music-focused fullscreen player with luminou
 
 ## Feature
 
-- **Luminous Dynamic Background**: Ambient background dynamically morphs based on the vibrant dominant colors of the track's album thumbnail without feeling murky or overly dark.
+### From YouTube to YouTune
+
+If we're listening to something passively, why settle for a cluttered interface?
+
+YouTune transforms the ordinary YouTube experience into a beautiful, immersive music player — letting the music take center stage instead of the UI.
+
+<div align="center">
+
+<img src="./assets/fig1.png" alt="YouTube interface" width="800" style="border-radius: 16px;">
+
+<br>
+
+⬇️
+
+<br>
+
+<img src="./assets/fig2.png" alt="YouTune fullscreen player" width="800" style="border-radius: 16px;">
+
+</div>
+
+> **YouTube is built around watching. YouTune is built around listening.**
+
+### Luminous Dynamic Background
+
+The background dynamically adapts to the vibrant colors of the track's album artwork, creating an atmospheric glow that changes with every song — without becoming overly dark or murky.
+
+### Immersive Artwork
+
+Album artwork is enlarged and presented without unnecessary cropping, turning your screen into a dedicated music experience.
+
+### Natural Track Transitions
+
+Swipe left or right to move between tracks with smooth visual transitions, making navigation feel more like a dedicated music player.
+
+### Distraction-Free Interface
+
+Controls automatically hide when idle, allowing you to simply enjoy the music without a screen full of buttons and recommendations.
+
+### Zero Audio Hijacking
+
+YouTune enhances the visual experience without taking control of YouTube's audio playback.
 
 ---
 
