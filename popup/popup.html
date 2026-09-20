@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>YouTune</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <header class="header">
+      <div class="brand">
+        <img src="../assets/icons/icon32.png" alt="YouTune Logo" class="brand-icon">
+        <div class="brand-text">
+          <h1 class="brand-title">YouTune</h1>
+          <p class="brand-tagline">YouTube, but made for music</p>
+        </div>
+      </div>
+    </header>
+
+    <main class="main-content">
+      <div class="toggle-card">
+        <div class="toggle-label-group">
+          <span class="toggle-title">YouTune Mode</span>
+          <span class="toggle-desc">Fullscreen music experience</span>
+        </div>
+        <label class="switch" for="youtune-toggle" aria-label="Toggle YouTune Mode">
+          <input type="checkbox" id="youtune-toggle" disabled>
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="status-card" id="status-card">
+        <div class="status-indicator" id="status-indicator"></div>
+        <span class="status-text" id="status-text">Checking status...</span>
+      </div>
+
+      <div class="shortcut-info">
+        <span class="shortcut-label">Keyboard Shortcut</span>
+        <kbd class="shortcut-badge" id="shortcut-display">Alt + Shift + Y</kbd>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <span class="footer-tip">Press Esc to exit anytime</span>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
