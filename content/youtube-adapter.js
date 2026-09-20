@@ -364,9 +364,60 @@
       return video.muted;
     }
 
-    next() {
+    /**
+     * Checks if YouTube player currently has a reachable next video.
+     */
+    hasNextTrack() {
       const nextBtn = document.querySelector('.ytp-next-button, button.ytp-next-button, a.ytp-next-button');
-      if (nextBtn && !nextBtn.hasAttribute('aria-disabled') && nextBtn.style.display !== 'none') {
+      if (nextBtn) {
+        const ariaDisabled = nextBtn.getAttribute('aria-disabled');
+        const isHidden = nextBtn.style.display === 'none' || nextBtn.offsetParent === null;
+        const isDisabledClass = nextBtn.classList.contains('ytp-button-disabled');
+        if (ariaDisabled !== 'true' && !isHidden && !isDisabledClass) {
+          return true;
+        }
+      }
+
+      const playlistNext = document.querySelector('ytd-playlist-panel-video-renderer[selected] + ytd-playlist-panel-video-renderer a#wc-endpoint');
+      if (playlistNext) {
+        return true;
+      }
+
+      return false;
+    }
+
+    /**
+     * Checks if YouTube player currently has a reachable previous video.
+     */
+    hasPreviousTrack() {
+      const prevBtn = document.querySelector('.ytp-prev-button, button.ytp-prev-button, a.ytp-prev-button');
+      if (prevBtn) {
+        const ariaDisabled = prevBtn.getAttribute('aria-disabled');
+        const isHidden = prevBtn.style.display === 'none' || prevBtn.offsetParent === null;
+        const isDisabledClass = prevBtn.classList.contains('ytp-button-disabled');
+        if (ariaDisabled !== 'true' && !isHidden && !isDisabledClass) {
+          return true;
+        }
+      }
+
+      const currentSelected = document.querySelector('ytd-playlist-panel-video-renderer[selected]');
+      if (currentSelected && currentSelected.previousElementSibling) {
+        const prevLink = currentSelected.previousElementSibling.querySelector('a#wc-endpoint');
+        if (prevLink) {
+          return true;
+        }
+      }
+
+      return false;
+    }
+
+    next() {
+      if (!this.hasNextTrack()) {
+        return false;
+      }
+
+      const nextBtn = document.querySelector('.ytp-next-button, button.ytp-next-button, a.ytp-next-button');
+      if (nextBtn && nextBtn.getAttribute('aria-disabled') !== 'true' && nextBtn.style.display !== 'none') {
         nextBtn.click();
         return true;
       }
@@ -377,20 +428,12 @@
         return true;
       }
 
-      const evt = new KeyboardEvent('keydown', {
-        key: 'N',
-        code: 'KeyN',
-        shiftKey: true,
-        bubbles: true,
-        cancelable: true
-      });
-      document.dispatchEvent(evt);
-      return true;
+      return false;
     }
 
     previous() {
       const currentTime = this.getCurrentTime();
-      if (currentTime > 1.5) {
+      if (currentTime > 1.5 || !this.hasPreviousTrack()) {
         this.seek(0);
         return false;
       }
@@ -398,8 +441,13 @@
     }
 
     previousTrack() {
+      if (!this.hasPreviousTrack()) {
+        this.seek(0);
+        return false;
+      }
+
       const prevBtn = document.querySelector('.ytp-prev-button, button.ytp-prev-button, a.ytp-prev-button');
-      if (prevBtn && !prevBtn.hasAttribute('aria-disabled') && prevBtn.style.display !== 'none') {
+      if (prevBtn && prevBtn.getAttribute('aria-disabled') !== 'true' && prevBtn.style.display !== 'none') {
         prevBtn.click();
         return true;
       }
@@ -413,17 +461,8 @@
         }
       }
 
-      const evt = new KeyboardEvent('keydown', {
-        key: 'P',
-        code: 'KeyP',
-        shiftKey: true,
-        bubbles: true,
-        cancelable: true
-      });
-      document.dispatchEvent(evt);
-
       this.seek(0);
-      return true;
+      return false;
     }
 
     on(event, callback) {

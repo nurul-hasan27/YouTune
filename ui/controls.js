@@ -70,10 +70,13 @@
         iconSvg: ICONS.previous,
         onClick: () => {
           const currentTime = this.adapter.getCurrentTime();
-          if (currentTime <= 1.5) {
+          const hasPrev = this.adapter.hasPreviousTrack();
+
+          if (currentTime <= 1.5 && hasPrev) {
             if (this._onPrevious) this._onPrevious();
             this.adapter.previousTrack();
           } else {
+            // Rewind to start without swiping or removing thumbnail
             this.adapter.seek(0);
           }
         }
@@ -93,8 +96,11 @@
         ariaLabel: 'Next track',
         iconSvg: ICONS.next,
         onClick: () => {
-          if (this._onNext) this._onNext();
-          this.adapter.next();
+          const hasNext = this.adapter.hasNextTrack();
+          if (hasNext) {
+            if (this._onNext) this._onNext();
+            this.adapter.next();
+          }
         }
       });
 

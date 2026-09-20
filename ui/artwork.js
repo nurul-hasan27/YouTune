@@ -22,6 +22,7 @@
       this._frameEl = null;
       this._currentSrc = null;
       this._animatingDirection = null;
+      this._swipeSafetyTimer = null;
     }
 
     render() {
@@ -73,6 +74,13 @@
       } else if (direction === 'right') {
         this._frameEl.classList.add('youtune-swipe-right-out');
       }
+
+      // Safety recovery: if no new track loads within 750ms, restore thumbnail visibility
+      clearTimeout(this._swipeSafetyTimer);
+      this._swipeSafetyTimer = setTimeout(() => {
+        this._clearAnimationClasses();
+        this._animatingDirection = null;
+      }, 750);
     }
 
     /**
@@ -81,6 +89,7 @@
     update(thumbnailUrl, incomingDirection = null) {
       if (!this._imageEl) return;
 
+      clearTimeout(this._swipeSafetyTimer);
       const direction = incomingDirection || this._animatingDirection;
       this._animatingDirection = null;
 
@@ -109,6 +118,7 @@
     }
 
     _clearAnimationClasses() {
+      clearTimeout(this._swipeSafetyTimer);
       if (!this._frameEl) return;
       this._frameEl.classList.remove(
         'youtune-swipe-left-out',

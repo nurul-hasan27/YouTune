@@ -337,13 +337,14 @@
         return;
       }
 
-      // ArrowLeft = Seek back, or Previous with right swipe ONLY IF <= 1.5s
+      // ArrowLeft = Seek back, or Previous with right swipe ONLY IF <= 1.5s AND hasPreviousTrack
       if (e.key === 'ArrowLeft') {
         e.preventDefault();
         e.stopPropagation();
         if (e.shiftKey || e.metaKey || e.ctrlKey) {
           const currentTime = this.adapter.getCurrentTime();
-          if (currentTime <= 1.5) {
+          const hasPrev = this.adapter.hasPreviousTrack();
+          if (currentTime <= 1.5 && hasPrev) {
             this.playerView.triggerSwipe('right');
             this.adapter.previousTrack();
           } else {
@@ -355,13 +356,16 @@
         return;
       }
 
-      // ArrowRight = Seek forward, or Next with left swipe
+      // ArrowRight = Seek forward, or Next with left swipe ONLY IF hasNextTrack
       if (e.key === 'ArrowRight') {
         e.preventDefault();
         e.stopPropagation();
         if (e.shiftKey || e.metaKey || e.ctrlKey) {
-          this.playerView.triggerSwipe('left');
-          this.adapter.next();
+          const hasNext = this.adapter.hasNextTrack();
+          if (hasNext) {
+            this.playerView.triggerSwipe('left');
+            this.adapter.next();
+          }
         } else {
           this.adapter.seekBy(5);
         }
