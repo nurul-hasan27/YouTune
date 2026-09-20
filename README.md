@@ -15,17 +15,23 @@ YouTune transforms the ordinary YouTube experience into a beautiful, immersive m
 
 <div align="center">
 
-<img src="./assets/fig1.png" alt="YouTube interface" width="800" style="border-radius: 16px;">
+<table>
+<tr>
+<td align="center">
+<img src="./assets/youtube.png" alt="YouTube interface" width="500" style="border-radius: 16px;">
+</td>
+
+<td align="center" style="font-size: 40px; padding: 0 20px;">
+→
+</td>
+
+<td align="center">
+<img src="./assets/youtune.png" alt="YouTune fullscreen player" width="500" style="border-radius: 16px;">
+</td>
+</tr>
+</table>
 
 <br>
-
-⬇️
-
-<br>
-
-<img src="./assets/fig2.png" alt="YouTune fullscreen player" width="800" style="border-radius: 16px;">
-
-</div>
 
 > **YouTube is built around watching. YouTune is built around listening.**
 
