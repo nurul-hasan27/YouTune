@@ -98,7 +98,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 /**
- * Extracts dominant vibrant colors from an image URL using OffscreenCanvas.
+ * Extracts the most dominant color of the thumbnail and its darker version.
  */
 async function extractDominantColors(url) {
   if (!url) return null;
@@ -114,6 +114,7 @@ async function extractDominantColors(url) {
 
     const imageData = ctx.getImageData(0, 0, 32, 32).data;
     const colorBuckets = new Map();
+    let sumR = 0, sumG = 0, sumB = 0, validPixels = 0;
 
     for (let i = 0; i < imageData.length; i += 4) {
       const r = imageData[i];
@@ -123,69 +124,60 @@ async function extractDominantColors(url) {
 
       if (a < 128) continue; // skip transparent
 
-      // Calculate saturation and brightness
-      const max = Math.max(r, g, b);
-      const min = Math.min(r, g, b);
-      const l = (max + min) / 510;
-      const d = max - min;
-      const s = max === 0 ? 0 : d / max;
+      sumR += r;
+      sumG += g;
+      sumB += b;
+      validPixels++;
 
-      // Filter out pure blacks, pure whites, and muddy greys
-      if (l < 0.15 || l > 0.95 || s < 0.12) continue;
+      // Filter extreme edge cases (near-black letterbox bars and blinding pure white)
+      if ((r < 20 && g < 20 && b < 20) || (r > 240 && g > 240 && b > 240)) continue;
 
-      // Quantize to 5-bit color buckets
-      const qr = Math.round(r / 20) * 20;
-      const qg = Math.round(g / 20) * 20;
-      const qb = Math.round(b / 20) * 20;
+      // Group into color buckets
+      const qr = Math.round(r / 16) * 16;
+      const qg = Math.round(g / 16) * 16;
+      const qb = Math.round(b / 16) * 16;
       const key = `${qr},${qg},${qb}`;
 
-      // Heavily reward saturated and luminous colors
-      const score = (colorBuckets.get(key) || 0) + (1 + s * 3.5 + l * 1.5);
-      colorBuckets.set(key, score);
+      colorBuckets.set(key, (colorBuckets.get(key) || 0) + 1);
     }
 
-    // Sort buckets by score
-    const sorted = Array.from(colorBuckets.entries())
-      .sort((a, b) => b[1] - a[1])
-      .map(entry => entry[0].split(',').map(Number));
+    let dominantR, dominantG, dominantB;
 
-    if (sorted.length > 0) {
-      const primary = sorted[0];
-      // Pick a secondary color that is visually distinct from primary
-      let secondary = sorted[1] || primary;
-      for (let i = 1; i < sorted.length; i++) {
-        const c = sorted[i];
-        const dist = Math.hypot(c[0] - primary[0], c[1] - primary[1], c[2] - primary[2]);
-        if (dist > 50) {
-          secondary = c;
-          break;
+    if (colorBuckets.size > 0) {
+      // Find the most frequent color bucket
+      let maxCount = 0;
+      let bestKey = null;
+      for (const [key, count] of colorBuckets.entries()) {
+        if (count > maxCount) {
+          maxCount = count;
+          bestKey = key;
         }
       }
-
-      // Preserve rich, vibrant colors with elevated luminosity so background is not too dark
-      const boostR = (val) => Math.min(255, Math.round(val * 1.15 + 15));
-      const boostG = (val) => Math.min(255, Math.round(val * 1.15 + 15));
-      const boostB = (val) => Math.min(255, Math.round(val * 1.15 + 25));
-
-      const pR = boostR(primary[0]);
-      const pG = boostG(primary[1]);
-      const pB = boostB(primary[2]);
-
-      const sR = boostR(secondary[0]);
-      const sG = boostG(secondary[1]);
-      const sB = boostB(secondary[2]);
-
-      const deepR = Math.max(12, Math.round(primary[0] * 0.35 + 8));
-      const deepG = Math.max(14, Math.round(primary[1] * 0.35 + 10));
-      const deepB = Math.max(26, Math.round(primary[2] * 0.45 + 18));
-
-      return {
-        primary: `rgba(${pR}, ${pG}, ${pB}, 0.82)`,
-        secondary: `rgba(${sR}, ${sG}, ${sB}, 0.65)`,
-        ambient: `rgba(${deepR}, ${deepG}, ${deepB}, 0.92)`,
-        base: `rgb(${Math.round(deepR * 0.55)}, ${Math.round(deepG * 0.55)}, ${Math.round(deepB * 0.7)})`
-      };
+      [dominantR, dominantG, dominantB] = bestKey.split(',').map(Number);
+    } else if (validPixels > 0) {
+      dominantR = Math.round(sumR / validPixels);
+      dominantG = Math.round(sumG / validPixels);
+      dominantB = Math.round(sumB / validPixels);
+    } else {
+      dominantR = 30;
+      dominantG = 41;
+      dominantB = 59;
     }
+
+    // Use the exact picked dominant color without dimming
+    const domR = dominantR;
+    const domG = dominantG;
+    const domB = dominantB;
+
+    // Darker version of the same color (20% intensity)
+    const darkR = Math.round(domR * 0.2);
+    const darkG = Math.round(domG * 0.2);
+    const darkB = Math.round(domB * 0.2);
+
+    return {
+      dominant: `rgb(${domR}, ${domG}, ${domB})`,
+      darker: `rgb(${darkR}, ${darkG}, ${darkB})`
+    };
   } catch (err) {
     console.warn(`${LOG_PREFIX} Error processing image bitmap:`, err);
   }

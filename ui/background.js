@@ -6,7 +6,7 @@
   window.YouTune = window.YouTune || {};
   window.YouTune.UI = window.YouTune.UI || {};
 
-  const DEFAULT_GRADIENT = 'radial-gradient(ellipse at 50% 35%, rgba(67, 56, 202, 0.75) 0%, rgba(30, 27, 75, 0.85) 45%, #0b1124 100%)';
+  const DEFAULT_GRADIENT = 'radial-gradient(ellipse at 50% 38%, rgb(30, 41, 59) 0%, rgb(10, 14, 23) 100%)';
 
   class BackgroundView {
     constructor() {
@@ -31,18 +31,14 @@
       this._layerB.className = 'youtune-bg-layer';
       this._layerB.style.background = DEFAULT_GRADIENT;
 
-      const vignette = document.createElement('div');
-      vignette.className = 'youtune-bg-vignette';
-
       this.element.appendChild(this._layerA);
       this.element.appendChild(this._layerB);
-      this.element.appendChild(vignette);
 
       return this.element;
     }
 
     /**
-     * Updates the ambient background with dominant colors extracted from the thumbnail.
+     * Updates the background using the most dominant color of the thumbnail and its darker version.
      */
     async update(thumbnailUrl) {
       if (!thumbnailUrl || thumbnailUrl === this._currentUrl) return;
@@ -61,8 +57,8 @@
           });
 
           if (response && response.success && response.colors) {
-            const { primary, secondary, ambient, base } = response.colors;
-            gradient = `radial-gradient(circle at 50% 32%, ${primary} 0%, ${secondary} 40%, ${ambient} 72%, ${base || '#0a0e20'} 100%)`;
+            const { dominant, darker } = response.colors;
+            gradient = `radial-gradient(ellipse at 50% 38%, ${dominant} 0%, ${darker} 100%)`;
           }
         }
       } catch (err) {
@@ -72,9 +68,9 @@
       // 2. Client-side fallback
       if (!gradient) {
         try {
-          const clientColors = await this._clientExtract(thumbnailUrl);
-          if (clientColors) {
-            gradient = `radial-gradient(circle at 50% 32%, ${clientColors[0]} 0%, ${clientColors[1]} 45%, ${clientColors[2]} 80%, #0a0e20 100%)`;
+          const colors = await this._clientExtract(thumbnailUrl);
+          if (colors) {
+            gradient = `radial-gradient(ellipse at 50% 38%, ${colors.dominant} 0%, ${colors.darker} 100%)`;
           }
         } catch (_) {}
       }
@@ -108,27 +104,59 @@
           settled = true;
           try {
             const canvas = document.createElement('canvas');
-            canvas.width = 16;
-            canvas.height = 16;
+            canvas.width = 32;
+            canvas.height = 32;
             const ctx = canvas.getContext('2d', { willReadFrequently: true });
-            ctx.drawImage(img, 0, 0, 16, 16);
-            const data = ctx.getImageData(0, 0, 16, 16).data;
+            ctx.drawImage(img, 0, 0, 32, 32);
+            const data = ctx.getImageData(0, 0, 32, 32).data;
 
-            let rSum = 0, gSum = 0, bSum = 0, count = 0;
+            const colorBuckets = new Map();
+            let sumR = 0, sumG = 0, sumB = 0, total = 0;
+
             for (let i = 0; i < data.length; i += 4) {
-              rSum += data[i];
-              gSum += data[i + 1];
-              bSum += data[i + 2];
-              count++;
-            }
-            const r = Math.round(rSum / count);
-            const g = Math.round(gSum / count);
-            const b = Math.round(bSum / count);
+              const r = data[i];
+              const g = data[i + 1];
+              const b = data[i + 2];
+              const a = data[i + 3];
 
-            const c1 = `rgba(${Math.min(255, r + 45)}, ${Math.min(255, g + 45)}, ${Math.min(255, b + 65)}, 0.85)`;
-            const c2 = `rgba(${Math.min(255, r + 15)}, ${Math.min(255, g + 15)}, ${Math.min(255, b + 35)}, 0.7)`;
-            const c3 = `rgba(${Math.round(r * 0.35 + 10)}, ${Math.round(g * 0.35 + 12)}, ${Math.round(b * 0.5 + 20)}, 0.9)`;
-            resolve([c1, c2, c3]);
+              if (a < 128) continue;
+              sumR += r; sumG += g; sumB += b; total++;
+
+              if ((r < 20 && g < 20 && b < 20) || (r > 240 && g > 240 && b > 240)) continue;
+
+              const qr = Math.round(r / 16) * 16;
+              const qg = Math.round(g / 16) * 16;
+              const qb = Math.round(b / 16) * 16;
+              const key = `${qr},${qg},${qb}`;
+              colorBuckets.set(key, (colorBuckets.get(key) || 0) + 1);
+            }
+
+            let domR, domG, domB;
+            if (colorBuckets.size > 0) {
+              let maxCount = 0, bestKey = null;
+              for (const [key, count] of colorBuckets.entries()) {
+                if (count > maxCount) {
+                  maxCount = count;
+                  bestKey = key;
+                }
+              }
+              [domR, domG, domB] = bestKey.split(',').map(Number);
+            } else if (total > 0) {
+              domR = Math.round(sumR / total);
+              domG = Math.round(sumG / total);
+              domB = Math.round(sumB / total);
+            } else {
+              domR = 30; domG = 41; domB = 59;
+            }
+
+            const cR = domR;
+            const cG = domG;
+            const cB = domB;
+
+            resolve({
+              dominant: `rgb(${cR}, ${cG}, ${cB})`,
+              darker: `rgb(${Math.round(cR * 0.2)}, ${Math.round(cG * 0.2)}, ${Math.round(cB * 0.2)})`
+            });
           } catch (e) {
             resolve(null);
           }
@@ -147,7 +175,7 @@
             settled = true;
             resolve(null);
           }
-        }, 1000);
+        }, 1200);
       });
     }
 
