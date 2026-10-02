@@ -18,7 +18,7 @@
     constructor() {
       this._videoElement = null;
       this._listeners = new Map();
-      this._savedVolume = 1.0;
+      this._savedVolume = null;
       this._savedMuted = false;
       this._isVolumeLocked = false;
       this._isSelfVolumeChange = false;
@@ -230,11 +230,14 @@
     }
 
     getVolume() {
-      if (this._isVolumeLocked) {
+      if (this._isVolumeLocked && this._savedVolume !== null) {
         return this._savedVolume;
       }
       const video = this.getVideoElement();
-      return video ? video.volume : this._savedVolume;
+      if (video && typeof video.volume === 'number' && Number.isFinite(video.volume)) {
+        return video.volume;
+      }
+      return this._savedVolume !== null ? this._savedVolume : 0.5;
     }
 
     isMuted() {
@@ -360,6 +363,67 @@
       this.seek(current + offsetSeconds);
     }
 
+    /**
+     * Inspects YouTube's active video element, native player, or localStorage
+     * to determine whatever volume the current YouTube session has.
+     */
+    getCurrentYouTubeVolume() {
+      // 1. Try active HTML5 video element
+      const video = this.getVideoElement();
+      if (video && typeof video.volume === 'number' && Number.isFinite(video.volume)) {
+        return {
+          volume: Math.max(0, Math.min(1, video.volume)),
+          muted: !!video.muted
+        };
+      }
+
+      // 2. Try native movie_player
+      try {
+        const mp = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+        if (mp && typeof mp.getVolume === 'function') {
+          const v = mp.getVolume();
+          if (typeof v === 'number' && Number.isFinite(v)) {
+            const isMuted = typeof mp.isMuted === 'function' ? mp.isMuted() : false;
+            return {
+              volume: Math.max(0, Math.min(1, v / 100)),
+              muted: !!isMuted
+            };
+          }
+        }
+      } catch (_) {}
+
+      // 3. Try YouTube's localStorage
+      try {
+        const raw = localStorage.getItem('yt-player-volume');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          const data = typeof parsed.data === 'string' ? JSON.parse(parsed.data) : parsed.data;
+          if (data && typeof data.volume === 'number' && Number.isFinite(data.volume)) {
+            return {
+              volume: Math.max(0, Math.min(1, data.volume / 100)),
+              muted: !!data.muted
+            };
+          }
+        }
+      } catch (_) {}
+
+      return {
+        volume: this._savedVolume !== null && typeof this._savedVolume === 'number' ? this._savedVolume : 0.5,
+        muted: !!this._savedMuted
+      };
+    }
+
+    /**
+     * Reads whatever volume the native YouTube player currently has
+     * and sets it as the baseline saved volume.
+     */
+    syncWithCurrentYouTubeVolume() {
+      const current = this.getCurrentYouTubeVolume();
+      this._savedVolume = current.volume;
+      this._savedMuted = current.muted;
+      return current;
+    }
+
     setSavedVolume(vol, muted) {
       if (typeof vol === 'number' && !isNaN(vol)) {
         this._savedVolume = Math.max(0, Math.min(1, vol));
@@ -370,6 +434,9 @@
     }
 
     enableVolumeLock() {
+      if (this._savedVolume === null) {
+        this.syncWithCurrentYouTubeVolume();
+      }
       this._isVolumeLocked = true;
       this._enforceVolumeOnVideo();
       this._syncToBridge(this._savedVolume, this._savedMuted, true);
@@ -377,7 +444,8 @@
 
     disableVolumeLock() {
       this._isVolumeLocked = false;
-      this._syncToBridge(this._savedVolume, this._savedMuted, false);
+      this._savedVolume = null;
+      this._syncToBridge(this.getVolume(), this.isMuted(), false);
       try {
         window.dispatchEvent(new CustomEvent('youtune:bridge-command', {
           detail: { action: 'UNLOCK_VOLUME' }
@@ -386,6 +454,9 @@
     }
 
     applySavedVolume() {
+      if (this._savedVolume === null) {
+        this.syncWithCurrentYouTubeVolume();
+      }
       this._enforceVolumeOnVideo();
     }
 
@@ -393,17 +464,27 @@
       const video = this.getVideoElement();
       if (!video) return;
 
+      if (this._savedVolume === null) {
+        this.syncWithCurrentYouTubeVolume();
+      }
+
       this._isSelfVolumeChange = true;
       try {
-        video.volume = this._savedVolume;
-        video.muted = this._savedMuted;
+        if (typeof this._savedVolume === 'number' && Number.isFinite(this._savedVolume)) {
+          video.volume = this._savedVolume;
+        }
+        if (typeof this._savedMuted === 'boolean') {
+          video.muted = this._savedMuted;
+        }
       } catch (err) {
         console.warn('[YouTune Adapter] Error enforcing video volume:', err);
       } finally {
         this._isSelfVolumeChange = false;
       }
 
-      this._syncToBridge(this._savedVolume, this._savedMuted, this._isVolumeLocked);
+      if (typeof this._savedVolume === 'number') {
+        this._syncToBridge(this._savedVolume, this._savedMuted, this._isVolumeLocked);
+      }
     }
 
     _syncToBridge(volume, muted, isLocked) {
@@ -437,7 +518,7 @@
       if (this._isSelfVolumeChange) return;
 
       // Anti-slide: If YouTune volume lock is active, prevent automated drops/slides
-      if (this._isVolumeLocked) {
+      if (this._isVolumeLocked && this._savedVolume !== null) {
         const volumeDiff = Math.abs(video.volume - this._savedVolume);
         const muteDiff = video.muted !== this._savedMuted;
 
@@ -462,15 +543,9 @@
       const video = this.getVideoElement();
       const clamped = Math.max(0, Math.min(1, vol));
 
-      if (isUserAction) {
-        this._savedVolume = clamped;
-        if (clamped > 0) {
-          this._savedMuted = false;
-        }
-        if (window.YouTune && window.YouTune.storage) {
-          window.YouTune.storage.set('youtune_volume', clamped);
-          window.YouTune.storage.set('youtune_muted', this._savedMuted);
-        }
+      this._savedVolume = clamped;
+      if (clamped > 0) {
+        this._savedMuted = false;
       }
 
       if (video) {
@@ -502,12 +577,7 @@
       const video = this.getVideoElement();
       const newMuted = !this.isMuted();
 
-      if (isUserAction) {
-        this._savedMuted = newMuted;
-        if (window.YouTune && window.YouTune.storage) {
-          window.YouTune.storage.set('youtune_muted', newMuted);
-        }
-      }
+      this._savedMuted = newMuted;
 
       if (video) {
         this._isSelfVolumeChange = true;
@@ -520,7 +590,7 @@
         }
       }
 
-      this._syncToBridge(this._savedVolume, newMuted, this._isVolumeLocked);
+      this._syncToBridge(this.getVolume(), newMuted, this._isVolumeLocked);
 
       this._emit('volumechange', {
         state: this.getPlaybackState(),

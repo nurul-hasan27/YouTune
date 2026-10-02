@@ -58,10 +58,12 @@
       this.adapter.getVideoElement();
       await this.metadata.resolveCurrent();
 
-      // 7. Load saved volume preferences and initialize adapter
-      const savedVolume = await this.storage.get('youtune_volume', 1.0);
-      const savedMuted = await this.storage.get('youtune_muted', false);
-      this.adapter.setSavedVolume(savedVolume, savedMuted);
+      // 7. Clean up any legacy storage volume key and adopt native YouTube volume baseline
+      try {
+        await this.storage.remove('youtune_volume');
+        await this.storage.remove('youtune_muted');
+      } catch (_) {}
+      this.adapter.syncWithCurrentYouTubeVolume();
 
       // 8. Check saved preference
       const shouldAutoEnable = await this.storage.get('youtune_enabled', false);
@@ -240,9 +242,10 @@
         document.activeElement.blur();
       }
 
-      this.adapter.enableVolumeLock();
       this.adapter.getVideoElement();
-      this.adapter.applySavedVolume();
+      // Adopt current native YouTube volume baseline so there is no sudden burst
+      this.adapter.syncWithCurrentYouTubeVolume();
+      this.adapter.enableVolumeLock();
       this.metadata.resolveCurrent();
 
       this.state.update({
@@ -300,8 +303,8 @@
         return;
       }
 
-      // Space = Play/Pause (Prioritized above everything when YouTune is active)
-      const isSpace = e.key === ' ' || e.key === 'Spacebar' || e.code === 'Space' || e.keyCode === 32;
+      // Space = Play/Pause (Prioritized above everything when YouTune is active; ignore with modifiers)
+      const isSpace = (e.key === ' ' || e.key === 'Spacebar' || e.code === 'Space' || e.keyCode === 32) && !e.metaKey && !e.ctrlKey && !e.altKey;
       if (isSpace) {
         e.preventDefault();
         e.stopPropagation();
@@ -335,8 +338,8 @@
         return;
       }
 
-      // ArrowUp = Increase volume
-      if (e.key === 'ArrowUp') {
+      // ArrowUp = Increase volume (ignore if meta/ctrl/alt is held down)
+      if (e.key === 'ArrowUp' && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
         e.stopPropagation();
         if (typeof e.stopImmediatePropagation === 'function') {
@@ -349,8 +352,8 @@
         return;
       }
 
-      // ArrowDown = Decrease volume
-      if (e.key === 'ArrowDown') {
+      // ArrowDown = Decrease volume (ignore if meta/ctrl/alt is held down)
+      if (e.key === 'ArrowDown' && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
         e.stopPropagation();
         if (typeof e.stopImmediatePropagation === 'function') {
@@ -363,11 +366,11 @@
         return;
       }
 
-      // ArrowLeft = Seek back, or Previous with right swipe ONLY IF <= 1.5s AND hasPreviousTrack
-      if (e.key === 'ArrowLeft') {
+      // ArrowLeft = Seek back, or Previous with right swipe ONLY IF <= 1.5s AND hasPreviousTrack (allow browser back navigation on Cmd+Left / Alt+Left)
+      if (e.key === 'ArrowLeft' && !e.metaKey && !e.altKey) {
         e.preventDefault();
         e.stopPropagation();
-        if (e.shiftKey || e.metaKey || e.ctrlKey) {
+        if (e.shiftKey) {
           const currentTime = this.adapter.getCurrentTime();
           const hasPrev = this.adapter.hasPreviousTrack();
           if (currentTime <= 1.5 && hasPrev) {
@@ -382,11 +385,11 @@
         return;
       }
 
-      // ArrowRight = Seek forward, or Next with left swipe ONLY IF hasNextTrack
-      if (e.key === 'ArrowRight') {
+      // ArrowRight = Seek forward, or Next with left swipe ONLY IF hasNextTrack (allow browser forward navigation on Cmd+Right / Alt+Right)
+      if (e.key === 'ArrowRight' && !e.metaKey && !e.altKey) {
         e.preventDefault();
         e.stopPropagation();
-        if (e.shiftKey || e.metaKey || e.ctrlKey) {
+        if (e.shiftKey) {
           const hasNext = this.adapter.hasNextTrack();
           if (hasNext) {
             this.playerView.triggerSwipe('left');
@@ -398,8 +401,8 @@
         return;
       }
 
-      // M = Toggle Mute
-      if (e.key === 'm' || e.key === 'M') {
+      // M = Toggle Mute (do NOT intercept when meta/cmd, ctrl, or alt is held down, so Cmd+M minimizes the app like normal YouTube)
+      if ((e.key === 'm' || e.key === 'M') && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
         e.stopPropagation();
         if (typeof e.stopImmediatePropagation === 'function') {
@@ -410,8 +413,8 @@
         return;
       }
 
-      // F = Fullscreen toggle
-      if (e.key === 'f' || e.key === 'F') {
+      // F = Fullscreen toggle (ignore if meta/ctrl/alt is held down, e.g. Cmd+F for search in page)
+      if ((e.key === 'f' || e.key === 'F') && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
         e.stopPropagation();
         this.fullscreen.toggle(this.playerView.rootElement);
