@@ -18,6 +18,10 @@
     constructor() {
       this._videoElement = null;
       this._listeners = new Map();
+      this._savedVolume = 1.0;
+      this._savedMuted = false;
+      this._isVolumeLocked = false;
+      this._isSelfVolumeChange = false;
       this._boundVideoHandlers = {
         play: () => this._onVideoEvent('play'),
         playing: () => this._onVideoEvent('playing'),
@@ -28,7 +32,7 @@
         waiting: () => this._onVideoEvent('waiting'),
         ended: () => this._onVideoEvent('ended'),
         durationchange: () => this._onVideoEvent('durationchange'),
-        volumechange: () => this._onVideoEvent('volumechange'),
+        volumechange: () => this._onVolumeChangeEvent(),
         loadedmetadata: () => this._onVideoEvent('loadedmetadata')
       };
     }
@@ -78,6 +82,11 @@
       for (const [evtName, handler] of Object.entries(this._boundVideoHandlers)) {
         this._videoElement.addEventListener(evtName, handler);
       }
+
+      if (this._isVolumeLocked) {
+        this.applySavedVolume();
+      }
+
       this._emit('attached', this._videoElement);
     }
 
@@ -221,13 +230,19 @@
     }
 
     getVolume() {
+      if (this._isVolumeLocked) {
+        return this._savedVolume;
+      }
       const video = this.getVideoElement();
-      return video ? video.volume : 1;
+      return video ? video.volume : this._savedVolume;
     }
 
     isMuted() {
+      if (this._isVolumeLocked) {
+        return this._savedMuted;
+      }
       const video = this.getVideoElement();
-      return video ? video.muted : false;
+      return video ? video.muted : this._savedMuted;
     }
 
     getPlaybackState() {
@@ -345,23 +360,177 @@
       this.seek(current + offsetSeconds);
     }
 
-    setVolume(vol) {
-      const video = this.getVideoElement();
-      if (!video) return;
-
-      const clamped = Math.max(0, Math.min(1, vol));
-      video.volume = clamped;
-      if (clamped > 0 && video.muted) {
-        video.muted = false;
+    setSavedVolume(vol, muted) {
+      if (typeof vol === 'number' && !isNaN(vol)) {
+        this._savedVolume = Math.max(0, Math.min(1, vol));
+      }
+      if (typeof muted === 'boolean') {
+        this._savedMuted = muted;
       }
     }
 
-    toggleMute() {
+    enableVolumeLock() {
+      this._isVolumeLocked = true;
+      this._enforceVolumeOnVideo();
+      this._syncToBridge(this._savedVolume, this._savedMuted, true);
+    }
+
+    disableVolumeLock() {
+      this._isVolumeLocked = false;
+      this._syncToBridge(this._savedVolume, this._savedMuted, false);
+      try {
+        window.dispatchEvent(new CustomEvent('youtune:bridge-command', {
+          detail: { action: 'UNLOCK_VOLUME' }
+        }));
+      } catch (_) {}
+    }
+
+    applySavedVolume() {
+      this._enforceVolumeOnVideo();
+    }
+
+    _enforceVolumeOnVideo() {
       const video = this.getVideoElement();
       if (!video) return;
 
-      video.muted = !video.muted;
-      return video.muted;
+      this._isSelfVolumeChange = true;
+      try {
+        video.volume = this._savedVolume;
+        video.muted = this._savedMuted;
+      } catch (err) {
+        console.warn('[YouTune Adapter] Error enforcing video volume:', err);
+      } finally {
+        this._isSelfVolumeChange = false;
+      }
+
+      this._syncToBridge(this._savedVolume, this._savedMuted, this._isVolumeLocked);
+    }
+
+    _syncToBridge(volume, muted, isLocked) {
+      const volPercent = Math.round(volume * 100);
+
+      // 1. Dispatch custom event to main-world bridge
+      try {
+        window.dispatchEvent(new CustomEvent('youtune:bridge-command', {
+          detail: {
+            action: isLocked ? 'LOCK_VOLUME' : 'SET_VOLUME',
+            volume: volPercent,
+            muted: !!muted,
+            locked: !!isLocked
+          }
+        }));
+      } catch (_) {}
+
+      // 2. Sync to localStorage for YouTube native player
+      try {
+        localStorage.setItem('yt-player-volume', JSON.stringify({
+          data: JSON.stringify({ volume: volPercent, muted: !!muted }),
+          creation: Date.now()
+        }));
+      } catch (_) {}
+    }
+
+    _onVolumeChangeEvent() {
+      const video = this.getVideoElement();
+      if (!video) return;
+
+      if (this._isSelfVolumeChange) return;
+
+      // Anti-slide: If YouTune volume lock is active, prevent automated drops/slides
+      if (this._isVolumeLocked) {
+        const volumeDiff = Math.abs(video.volume - this._savedVolume);
+        const muteDiff = video.muted !== this._savedMuted;
+
+        if (volumeDiff > 0.01 || muteDiff) {
+          // Automatic decrease/drop detected (e.g. YouTube dropping volume to 27%).
+          // Restore the user's saved volume immediately.
+          this._enforceVolumeOnVideo();
+          return;
+        }
+      }
+
+      this._emit('volumechange', {
+        state: this.getPlaybackState(),
+        currentTime: this.getCurrentTime(),
+        duration: this.getDuration(),
+        volume: this.getVolume(),
+        muted: this.isMuted()
+      });
+    }
+
+    setVolume(vol, isUserAction = true) {
+      const video = this.getVideoElement();
+      const clamped = Math.max(0, Math.min(1, vol));
+
+      if (isUserAction) {
+        this._savedVolume = clamped;
+        if (clamped > 0) {
+          this._savedMuted = false;
+        }
+        if (window.YouTune && window.YouTune.storage) {
+          window.YouTune.storage.set('youtune_volume', clamped);
+          window.YouTune.storage.set('youtune_muted', this._savedMuted);
+        }
+      }
+
+      if (video) {
+        this._isSelfVolumeChange = true;
+        try {
+          video.volume = clamped;
+          if (clamped > 0 && video.muted) {
+            video.muted = false;
+          }
+        } catch (e) {
+          console.warn('[YouTune Adapter] Error setting video.volume:', e);
+        } finally {
+          this._isSelfVolumeChange = false;
+        }
+      }
+
+      this._syncToBridge(clamped, this._savedMuted, this._isVolumeLocked);
+
+      this._emit('volumechange', {
+        state: this.getPlaybackState(),
+        currentTime: this.getCurrentTime(),
+        duration: this.getDuration(),
+        volume: clamped,
+        muted: this._savedMuted
+      });
+    }
+
+    toggleMute(isUserAction = true) {
+      const video = this.getVideoElement();
+      const newMuted = !this.isMuted();
+
+      if (isUserAction) {
+        this._savedMuted = newMuted;
+        if (window.YouTune && window.YouTune.storage) {
+          window.YouTune.storage.set('youtune_muted', newMuted);
+        }
+      }
+
+      if (video) {
+        this._isSelfVolumeChange = true;
+        try {
+          video.muted = newMuted;
+        } catch (e) {
+          console.warn('[YouTune Adapter] Error setting video.muted:', e);
+        } finally {
+          this._isSelfVolumeChange = false;
+        }
+      }
+
+      this._syncToBridge(this._savedVolume, newMuted, this._isVolumeLocked);
+
+      this._emit('volumechange', {
+        state: this.getPlaybackState(),
+        currentTime: this.getCurrentTime(),
+        duration: this.getDuration(),
+        volume: this.getVolume(),
+        muted: newMuted
+      });
+
+      return newMuted;
     }
 
     /**

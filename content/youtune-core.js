@@ -51,15 +51,19 @@
       this.navigation.onVideoChange((info) => this._onVideoChange(info));
       this.recovery.onRecovered((video) => this._onPlayerRecovered(video));
 
-      // 5. Global keyboard shortcuts inside active mode (window + document capture)
+      // 5. Global keyboard shortcuts inside active mode (window capture)
       window.addEventListener('keydown', this._boundKeyHandler, true);
-      document.addEventListener('keydown', this._boundKeyHandler, true);
 
       // 6. Initial check: probe for current video and player
       this.adapter.getVideoElement();
       await this.metadata.resolveCurrent();
 
-      // 7. Check saved preference
+      // 7. Load saved volume preferences and initialize adapter
+      const savedVolume = await this.storage.get('youtune_volume', 1.0);
+      const savedMuted = await this.storage.get('youtune_muted', false);
+      this.adapter.setSavedVolume(savedVolume, savedMuted);
+
+      // 8. Check saved preference
       const shouldAutoEnable = await this.storage.get('youtune_enabled', false);
       const isWatchPage = window.location.pathname === '/watch' || !!this.adapter.getCurrentVideoId();
 
@@ -83,6 +87,10 @@
       const handlePlayingOrPlay = () => {
         this.state.update({ playbackState: 'playing' });
         this._startTick();
+
+        if (this.state.get('enabled')) {
+          this.adapter.applySavedVolume();
+        }
 
         // If a video transition is pending, commit new metadata now that the new song is playing
         if (this._pendingTransitionId) {
@@ -196,6 +204,7 @@
       await this.metadata.resolveCurrent();
 
       if (this.state.get('enabled')) {
+        this.adapter.applySavedVolume();
         this.playerView.setVisible(true);
         if (this.adapter.isPlaying()) {
           this._startTick();
@@ -206,6 +215,9 @@
     _onPlayerRecovered(video) {
       console.log('[YouTune] Player recovered, resynchronizing...');
       this.adapter.attachToVideo(video);
+      if (this.state.get('enabled')) {
+        this.adapter.applySavedVolume();
+      }
       this.metadata.resolveCurrent();
       this.state.update({
         playbackState: this.adapter.getPlaybackState(),
@@ -228,7 +240,9 @@
         document.activeElement.blur();
       }
 
+      this.adapter.enableVolumeLock();
       this.adapter.getVideoElement();
+      this.adapter.applySavedVolume();
       this.metadata.resolveCurrent();
 
       this.state.update({
@@ -251,6 +265,7 @@
     async disable() {
       console.log('[YouTune] Disabling YouTune mode');
       this._stopTick();
+      this.adapter.disableVolumeLock();
 
       if (this.fullscreen.isBrowserFullscreen()) {
         await this.fullscreen.exit();
@@ -279,6 +294,11 @@
 
     _onKeyDown(e) {
       if (!this.state.get('enabled')) return;
+
+      const activeTag = document.activeElement ? document.activeElement.tagName : '';
+      if (activeTag === 'INPUT' || activeTag === 'TEXTAREA' || (document.activeElement && document.activeElement.isContentEditable)) {
+        return;
+      }
 
       // Space = Play/Pause (Prioritized above everything when YouTune is active)
       const isSpace = e.key === ' ' || e.key === 'Spacebar' || e.code === 'Space' || e.keyCode === 32;
@@ -319,6 +339,9 @@
       if (e.key === 'ArrowUp') {
         e.preventDefault();
         e.stopPropagation();
+        if (typeof e.stopImmediatePropagation === 'function') {
+          e.stopImmediatePropagation();
+        }
         const curVol = this.adapter.getVolume();
         const nextVol = Math.min(1, Math.round((curVol + 0.05) * 100) / 100);
         this.adapter.setVolume(nextVol);
@@ -330,6 +353,9 @@
       if (e.key === 'ArrowDown') {
         e.preventDefault();
         e.stopPropagation();
+        if (typeof e.stopImmediatePropagation === 'function') {
+          e.stopImmediatePropagation();
+        }
         const curVol = this.adapter.getVolume();
         const nextVol = Math.max(0, Math.round((curVol - 0.05) * 100) / 100);
         this.adapter.setVolume(nextVol);
@@ -376,6 +402,9 @@
       if (e.key === 'm' || e.key === 'M') {
         e.preventDefault();
         e.stopPropagation();
+        if (typeof e.stopImmediatePropagation === 'function') {
+          e.stopImmediatePropagation();
+        }
         const isMuted = this.adapter.toggleMute();
         this.playerView.showVolumeToast(isMuted ? 'Muted' : Math.round(this.adapter.getVolume() * 100));
         return;
@@ -398,6 +427,7 @@
       this.navigation.stop();
       this.recovery.stop();
       this.fullscreen.stop();
+      this.adapter.disableVolumeLock();
       this.adapter.detach();
       this.playerView.unmount();
       this._isInitialized = false;

@@ -45,6 +45,16 @@
       "matches": [
         "https://www.youtube.com/*"
       ],
+      "js": [
+        "content/main-world-bridge.js"
+      ],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://www.youtube.com/*"
+      ],
       "css": [
         "styles/youtune.css"
       ],
